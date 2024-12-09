@@ -1,0 +1,80 @@
+version: '3'
+
+services:
+  reverse-proxy:
+    image: traefik:v2.11
+    command:
+      - --api.insecure=true
+      - --providers.docker
+      - --entrypoints.http.address=:80
+      - --entrypoints.mysql.address=:3306
+      - --providers.docker.exposedbydefault=true
+    ports:
+      - "80:80"
+      - "8080:8080"
+      - "3306:3306"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+  db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: test_password
+      MYSQL_DATABASE: course_catalog
+      MYSQL_USER: test_user
+      MYSQL_PASSWORD: test_password
+    volumes:
+        - ./database/volume:/var/lib/mysql
+    hostname: database.cc.localhost
+    labels:
+      - traefik.tcp.routers.mysql.entrypoints=mysql
+      - traefik.tcp.routers.mysql.rule=HostSNI(`*`)
+      - traefik.tcp.services.mysql.loadbalancer.server.port=3306
+    ports:
+      - 8001:3306
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api  # Use the custom Dockerfile name
+    container_name: api
+    depends_on:
+      - db
+    volumes:
+      - ./api/v1:/var/www/html/
+    stdin_open: true
+    tty: true
+    hostname: api.cc.localhost
+    labels:
+      - traefik.http.routers.api.rule=Host(`api.cc.localhost`)
+    
+  front:
+      image: node:18 # Node.js image to run React
+      container_name: front
+      depends_on:
+        - api
+      working_dir: /app
+      volumes:
+        - ./front_end:/app
+      ports:
+        - "3000:3000"  # Exposes React's development server on port 3000
+      command: |
+        bash -c "npm install && npm start" # Installs dependencies and starts React
+      stdin_open: true
+      tty: true
+      hostname: front.cc.localhost
+      labels:
+        - traefik.http.routers.front.rule=Host(`cc.localhost`)
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: phpmyadmin
+    environment:
+      PMA_HOST: db  # The hostname of the MySQL container
+      PMA_USER: test_user
+      PMA_PASSWORD: test_password
+    ports:
+      - "8081:80"  # Exposes phpMyAdmin on port 8081
+    depends_on:
+      - db
+    labels:
+      - traefik.http.routers.phpmyadmin.rule=Host(`phpmyadmin.cc.localhost`)
